@@ -14,6 +14,8 @@ const debug = false
 const VERSION = 0.3
 //console.log('loki binary downloader version', VERSION, 'registered')
 
+let xenial_hack = false
+
 function getFileSizeSync(path) {
   const stats = fs.statSync(path);
   return stats.size;
@@ -150,8 +152,8 @@ function downloadArchive(url, config, options) {
           //console.log('stdout', stdout)
           //console.log('stderr', stderr)
           //console.log('Untar Success')
-          console.log(filename, 'successfully extracted to /opt/loki-launcher/bin', getFileSizeSync('/opt/loki-launcher/bin/' + filename), 'bytes extracted')
-          console.log('Running version check')
+          console.log(filename, 'successfully extracted to /opt/loki-launcher/bin', getFileSizeSync('/opt/loki-launcher/bin/' + filename), 'bytes extracted.')
+          console.log('Running version check..')
           var option = '-version'
           if (filename == 'loki-storage') {
             option = 'v'
@@ -198,7 +200,7 @@ function downloadGithubRepo(github_url, options, config, cb) {
     }
 
     if (data.length) {
-      console.log('got a list of', data.length, 'releases, narrowing it down')
+      //console.log('Got a list of', data.length, 'releases, narrowing it down.')
       var selectedVersion = null
       for(var i in data) {
         const ver = data[i]
@@ -222,7 +224,7 @@ function downloadGithubRepo(github_url, options, config, cb) {
         }
       }
       if (selectedVersion === null) {
-        console.error('Could not find latest release')
+        console.error('Could not find latest release from a list of', data.length)
         if (options.prereleaseOnly) console.log('prerelease only mode')
         if (options.notPrerelease) console.log('release only Mode')
         process.exit(1)
@@ -241,19 +243,20 @@ function downloadGithubRepo(github_url, options, config, cb) {
       console.error('Sorry, platform', os.platform(), 'is not currently supported, please let us know you would like us to support this platform by opening an issue on github: https://github.com/loki-project/loki-launcher/issues')
       process.exit(1)
     }
+    var platform = new RegExp(process.arch, 'i')
     var searchRE = new RegExp(search, 'i')
     var found = false // we only need one archive for our platform and we'll figure it out
     options.cb = cb
     for(var i in data.assets) {
       var asset = data.assets[i]
       //console.log(i, 'asset', asset.browser_download_url)
-      if (search == 'linux' && asset.browser_download_url.match(searchRE) && asset.browser_download_url.match(/\.tar.xz/i)) {
+      if (search == 'linux' && asset.browser_download_url.match(searchRE) && asset.browser_download_url.match(/\.tar.xz/i) && asset.browser_download_url.match(/-x64-/i)) {
         // linux
         options.ext = '.tar.xz'
         downloadArchive(asset.browser_download_url, config, options)
       }
       // storage server support
-      if (search == 'osx' && asset.browser_download_url.match(searchRE) && asset.browser_download_url.match(/\.tar.xz/i)) {
+      if (search == 'osx' && asset.browser_download_url.match(searchRE) && asset.browser_download_url.match(/\.tar.xz/i) && asset.browser_download_url.match(/-x64-/i)) {
         // MacOS
         if (!found) {
           options.ext = '.tar.xz'
@@ -261,7 +264,7 @@ function downloadGithubRepo(github_url, options, config, cb) {
           found = true
         }
       } else
-      if (search == 'osx' && asset.browser_download_url.match(searchRE) && asset.browser_download_url.match(/\.zip/i)) {
+      if (search == 'osx' && asset.browser_download_url.match(searchRE) && asset.browser_download_url.match(/\.zip/i) && asset.browser_download_url.match(/-x64-/i)) {
         // MacOS
         if (!found) {
           options.ext = '.zip'
@@ -276,6 +279,15 @@ function downloadGithubRepo(github_url, options, config, cb) {
 // FIXME: move into options
 var start_retries = 0
 function start(config) {
+  /*
+  const { exec } = require('child_process')
+  exec('lsb_release -c', (err, stdout, stderr) => {
+    //console.log(stdout)
+    if (stdout && stdout.match(/xenial/)) {
+      xenial_hack = true
+    }
+  })
+  */
   // quick request so should be down by the time the file downloads...
   lib.stopLauncher(config)
   /*
@@ -290,17 +302,30 @@ function start(config) {
   // deb support? nope, you use apt to update...
   // FIXME: this force sudo support...
   lokinet.mkDirByPathSync('/opt/loki-launcher/bin')
+  console.log('Configured architecture:', process.arch)
+
+  // can't get draft release without authenticating as someone that can see the draft...
 
   if (config.blockchain.network == 'test' || config.blockchain.network == 'demo' || config.blockchain.network == 'staging') {
-    downloadGithubRepo('https://api.github.com/repos/loki-project/loki-storage-server/releases', { filename: 'loki-storage', useDir: false, prereleaseOnly: true }, config, function() {
+    downloadGithubRepo('https://api.github.com/repos/loki-project/loki-network/releases', { filename: 'lokinet', useDir: true, notPrerelease: true }, config, function() {
       start_retries = 0
-      downloadGithubRepo('https://api.github.com/repos/loki-project/loki/releases', { filename: 'lokid', useDir: true, prereleaseOnly: true }, config)
+      downloadGithubRepo('https://api.github.com/repos/loki-project/loki-storage-server/releases', { filename: 'loki-storage', useDir: false, notPrerelease: true }, config, function() {
+        start_retries = 0
+        downloadGithubRepo('https://api.github.com/repos/loki-project/loki/releases', { filename: 'lokid', useDir: true, notPrerelease: true }, config)
+      })
     })
   } else {
-    // 4.x
-    downloadGithubRepo('https://api.github.com/repos/loki-project/loki-storage-server/releases', { filename: 'loki-storage', useDir: false, notPrerelease: true }, config, function() {
+    downloadGithubRepo('https://api.github.com/repos/loki-project/loki-network/releases', { filename: 'lokinet', useDir: true, notPrerelease: true }, config, function() {
       start_retries = 0
-      downloadGithubRepo('https://api.github.com/repos/loki-project/loki/releases', { filename: 'lokid', useDir: true, notPrerelease: true }, config)
+      downloadGithubRepo('https://api.github.com/repos/loki-project/loki-storage-server/releases', { filename: 'loki-storage', useDir: false, notPrerelease: true }, config, function() {
+        start_retries = 0
+        if (xenial_hack) {
+          console.log('Detected Xenial, forcing 4.0.5. This is temporary, until 5.1.0 supports your operating system version')
+          downloadGithubRepo('https://api.github.com/repos/loki-project/loki/releases/19352901', { filename: 'lokid', useDir: true, notPrerelease: true }, config)
+        } else {
+          downloadGithubRepo('https://api.github.com/repos/loki-project/loki/releases', { filename: 'lokid', useDir: true, notPrerelease: true }, config)
+        }
+      })
     })
   }
 }

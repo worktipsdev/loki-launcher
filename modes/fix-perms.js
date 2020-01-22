@@ -1,7 +1,9 @@
 const fs = require('fs')
+const os = require('os')
 const pathUtil = require('path')
 const lokinet = require(__dirname + '/../lokinet')
 const lib = require(__dirname + '/../lib')
+const { exec } = require('child_process')
 
 function walk(dir, fn, cb) {
   var count,
@@ -70,15 +72,62 @@ function start(user, dir, config) {
     console.log('setting permissions to', user)
     uidGetter.uidNumber(user, function(err, uid, homedir) {
       if (err) {
-        console.error('Username lookup failed: ', err)
+        if (err === '404') {
+          console.error('Username', user, 'does not exist! Please either create the user or double check that you gave us the correct user you intended to.')
+        } else {
+          console.error('Username lookup failed:', err)
+        }
         return
       }
       console.log('user', user, 'uid is', uid, 'homedir is', homedir)
       homedir = homedir.replace(/\/$/, '')
+
+      // we actually handle this differently later
+      //configUtil.changeHomedir(config, homedir)
+
+      // if this is default, then we'll be the wrong user...
+      if (config.blockchain.data_dir_is_default) {
+        const configUtil = require(__dirname + '/../config')
+        config.blockchain.data_dir = homedir + '/.loki'
+        // adjust for network type
+        config.blockchain.data_dir = configUtil.getLokiDataDir(config)
+      }
+      if (config.storage.data_dir_is_default) {
+        config.storage.data_dir = homedir + '/.loki/storage'
+        if (config.storage.testnet) {
+          config.storage.data_dir += '_testnet'
+        }
+      }
+      if (config.network.data_dir_is_default) {
+        config.network.data_dir = homedir + '/.loki/network'
+        if (config.network.testnet) {
+          config.network.data_dir += '_testnet'
+        }
+      }
+      //console.log('blockchain.data_dir', config.blockchain.data_dir)
+      //console.log('storage.data_dir', config.storage.data_dir)
+      //console.log('network.data_dir', config.network.data_dir)
+
       // binary paths
-      fs.chownSync(config.blockchain.binary_path, uid, 0)
-      if (config.network.binary_path) fs.chownSync(config.network.binary_path, uid, 0)
-      if (config.storage.binary_path) fs.chownSync(config.storage.binary_path, uid, 0)
+      if (fs.existsSync(config.blockchain.binary_path)) {
+        fs.chownSync(config.blockchain.binary_path, uid, 0)
+      } else {
+        console.warn('Warning your lokid does not exist at', config.blockchain.binary_path, ', recommend running download-binaries or obtain them off github')
+      }
+      if (config.network.binary_path) {
+        if (fs.existsSync(config.network.binary_path)) {
+          fs.chownSync(config.network.binary_path, uid, 0)
+        } else {
+          console.warn('Warning your lokinet does not exist at', config.network.binary_path, ', recommend running download-binaries or obtain them off github')
+        }
+      }
+      if (config.storage.binary_path) {
+        if (fs.existsSync(config.storage.binary_path)) {
+          fs.chownSync(config.storage.binary_path, uid, 0)
+        } else {
+          console.warn('Warning your loki-storage does not exist at', config.storage.binary_path, ', recommend running download-binaries or obtain them off github')
+        }
+      }
       // config.launcher.var_path doesn't always exist yet
       if (fs.existsSync(config.launcher.var_path)) {
         fs.chownSync(config.launcher.var_path, uid, 0)
@@ -92,50 +141,70 @@ function start(user, dir, config) {
           fs.chownSync('/opt/loki-launcher', uid, 0)
         }
       }
+
       // config.blockchain.data_dir
-      // if this is default, then we'll be the wrong user...
-      if (config.blockchain.data_dir_is_default) {
-        const configUtil = require(__dirname + '/../config')
-        config.blockchain.data_dir = homedir + '/.loki'
-        const data_dir = configUtil.getLokiDataDir(config)
+      if (config.storage.data_dir) {
         // create it if needed
-        if (!fs.existsSync(data_dir)) {
-          lokinet.mkDirByPathSync(data_dir)
+        if (!fs.existsSync(config.blockchain.data_dir)) {
+          lokinet.mkDirByPathSync(config.blockchain.data_dir)
         }
         //console.log('default blockchain data_dir is', data_dir)
-        fs.chownSync(data_dir, uid, 0)
-      } else {
-        if (config.blockchain.data_dir) fs.chownSync(config.blockchain.data_dir, uid, 0)
+        fs.chownSync(config.blockchain.data_dir, uid, 0)
       }
       // config.storage.data_dir
-      // if this is default, then we'll be the wrong user...
-      if (config.storage.data_dir_is_default) {
-        config.storage.data_dir = homedir + '/.loki/storage'
+      if (config.storage.data_dir) {
         // create it if needed
         if (!fs.existsSync(config.storage.data_dir)) {
           lokinet.mkDirByPathSync(config.storage.data_dir)
         }
         fs.chownSync(config.storage.data_dir, uid, 0)
-      } else {
-        if (config.storage.data_dir) fs.chownSync(config.storage.data_dir, uid, 0)
       }
       // config.network.data_dir
-      if (config.network.data_dir) fs.chownSync(config.network.data_dir, uid, 0)
+      if (config.network.data_dir) {
+        // create it if needed
+        if (!fs.existsSync(config.network.data_dir)) {
+          lokinet.mkDirByPathSync(config.network.data_dir)
+        }
+        fs.chownSync(config.network.data_dir, uid, 0)
+      }
       // config.network.lokinet_nodedb
       if (config.network.lokinet_nodedb) fs.chownSync(config.network.lokinet_nodedb, uid, 0)
-      // config.storage.data_dir
-      if (config.storage.data_dir) fs.chownSync(config.storage.data_dir, uid, 0)
-      if (config.storage.enabled) {
-        if (fs.existsSync(config.launcher.var_path + '/storageServer.version')) {
-          fs.chownSync(config.launcher.var_path + '/storageServer.version', uid, 0)
-        }
-      }
       if (config.network.enabled) {
         if (fs.existsSync(config.launcher.var_path + '/lokinet.version')) {
           fs.chownSync(config.launcher.var_path + '/lokinet.version', uid, 0)
         }
         if (fs.existsSync(config.launcher.var_path + '/snode_address')) {
           fs.chownSync(config.launcher.var_path + '/snode_address', uid, 0)
+        }
+        if (os.platform() == 'linux') {
+          // not root-like
+          exec('getcap ' + config.network.binary_path, function (error, stdout, stderr) {
+            //console.log('stdout', stdout)
+            // src/loki-network/lokinet = cap_net_bind_service,cap_net_admin+eip
+            if (!(stdout.match(/cap_net_bind_service/) && stdout.match(/cap_net_admin/))) {
+              if (process.getgid() != 0) {
+                console.log(config.network.binary_path, 'does not have setcap. Please run fix-perms with sudo one time, so we can fix this')
+                process.exit()
+              } else {
+                // are root
+                console.log('going to try to setcap your lokinet binary, so you don\'t need to run as root')
+                exec('setcap cap_net_admin,cap_net_bind_service=+eip ' + config.network.binary_path, function (error, stdout, stderr) {
+                  if (error) console.error('upgrade failed:', error)
+                  else console.log('binary permissions upgraded')
+                  //console.log('fix stdout', stdout)
+                  //console.log('fix stderr', stderr)
+                })
+              }
+            }
+          })
+        }
+      }
+
+      // config.storage.data_dir
+      if (config.storage.data_dir) fs.chownSync(config.storage.data_dir, uid, 0)
+      if (config.storage.enabled) {
+        if (fs.existsSync(config.launcher.var_path + '/storageServer.version')) {
+          fs.chownSync(config.launcher.var_path + '/storageServer.version', uid, 0)
         }
       }
       // apt will all be owned as root...
@@ -154,6 +223,7 @@ function start(user, dir, config) {
       }
       // this is the only place download binaries downloads too
       fs.chownSync('/opt/loki-launcher/bin', uid, 0)
+      // this fixes storage/network config files too
       if (config.blockchain.data_dir) {
         walk(config.blockchain.data_dir, function(path, cb) {
           console.log('fixing blockchain.data_dir file', path)

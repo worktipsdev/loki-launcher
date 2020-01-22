@@ -15,7 +15,7 @@ var pids = {}
 
 function killStorageServer(config, running, pids) {
   if (config.storage.enabled && running.storageServer) {
-    console.log('LAUNCHER: killing storage on', pids.storageServer)
+    console.log('LAUNCHER: Killing storage on', pids.storageServer)
     process.kill(pids.storageServer, 'SIGINT')
     running.storageServer = 0
   }
@@ -28,7 +28,7 @@ function killLokinetAndStorageServer(config, running, pids) {
   // FIXME: only need to restart if the key changed
   if (config.network.enabled) {
     if (running.lokinet) {
-      console.log('LAUNCHER: killing lokinet on', pids.lokinet)
+      console.log('LAUNCHER: Killing lokinet on', pids.lokinet)
       process.kill(pids.lokinet, 'SIGINT')
       running.lokinet = 0
     }
@@ -106,7 +106,7 @@ module.exports = function(args, config, entryPoint, debug) {
   // something like estimated/calculated loki_data_dir
   // also this will change behavior if we actually set the CLI option to lokid
   if (!config.blockchain.data_dir) {
-    console.log('using default data_dir, network', config.blockchain.network)
+    console.log('Using default data_dir, network', config.blockchain.network)
     config.blockchain.data_dir = os.homedir() + '/.loki'
   }
   // make sure data_dir has no trailing slash
@@ -160,8 +160,13 @@ module.exports = function(args, config, entryPoint, debug) {
     config.network.encryption_privkey = config.network.data_dir + '/encryption.private'
     config.network.ident_privkey = config.network.data_dir + '/identity.private'
     config.network.contact_file = config.network.data_dir + '/self.signed'
+    if ((config.network.profiling === undefined || config.network.profiling) && config.network.profiling_file === undefined) {
+      config.network.profiling_file = config.network.data_dir + '/profiles.dat'
+    }
   }
-  lokinet.checkConfig(config.network) // can auto-configure network.binary_path. how?
+  if (!configUtil.isBlockchainBinary3X && !configUtil.isBlockchainBinary4Xor5X && config.network.enabled) {
+    lokinet.checkConfig(config.network) // can auto-configure network.binary_path. how?
+  }
 
   // lokid config and most other configs should be locked into stone by this point
   // (except for lokinet, since we need to copy lokid over to it)
@@ -255,7 +260,7 @@ module.exports = function(args, config, entryPoint, debug) {
   if (!fs.existsSync(config.launcher.var_path)) {
     // just make sure this directory exists
     // FIXME: maybe skip if root...
-    console.log('making', config.launcher.var_path)
+    console.log('Making', config.launcher.var_path)
     lokinet.mkDirByPathSync(config.launcher.var_path)
   }
 
@@ -290,7 +295,7 @@ module.exports = function(args, config, entryPoint, debug) {
     if (config.storage.data_dir !== undefined) {
       if (fs.existsSync(config.storage.data_dir)) {
         if (!fs.lstatSync(config.storage.data_dir).isDirectory()) {
-          console.error('storage server data_dir is not a directory', config.storage.data_dir)
+          console.error('Storage server data_dir is not a directory', config.storage.data_dir)
           process.exit(1)
         } // else perfect
       } // else we'll make
@@ -321,7 +326,7 @@ module.exports = function(args, config, entryPoint, debug) {
   // are we already running
   var pid = lib.areWeRunning(config)
   if (pid) {
-    console.log('LAUNCHER: loki launcher already active under', pid)
+    console.log('LAUNCHER: Loki launcher already active under', pid)
     process.exit()
   }
 
@@ -359,7 +364,7 @@ module.exports = function(args, config, entryPoint, debug) {
         // auto configure value
         lokinet.getPublicIPv4(function(publicIPv4) {
           if (!publicIPv4) {
-            console.error('LAUNCHER: could not determine a IPv4 public address for this host')
+            console.error('LAUNCHER: Could not determine a IPv4 public address for this host.')
             process.exit()
           }
           config.launcher.publicIPv4 = publicIPv4
@@ -390,7 +395,7 @@ module.exports = function(args, config, entryPoint, debug) {
   if (config.network.enabled && config.storage.enabled) {
     // FIXME: clearnet support?
     if (!running.lokinet && running.storageServer) {
-      console.log('LAUNCHER: we have storage server with no lokinet, killing it', pids.storageServer)
+      console.log('LAUNCHER: We have storage server with no lokinet, killing it.', pids.storageServer)
       process.kill(pids.storageServer, 'SIGINT')
       running.storageServer = 0
     }
@@ -405,7 +410,7 @@ module.exports = function(args, config, entryPoint, debug) {
 
   if (config.network.enabled && !running.lokid) {
     // no lokid, kill remaining
-    console.log('LAUNCHER: lokid is down, kill idlers')
+    //console.log('LAUNCHER: lokid is down, kill idlers.')
     killLokinetAndStorageServer(config, running, pids)
   }
 
@@ -417,14 +422,14 @@ module.exports = function(args, config, entryPoint, debug) {
       console.log('rpc:', useConfig.blockchain.rpc_ip + ':' + useConfig.blockchain.rpc_port, 'status', portFree?'not running':'running')
       if (!portFree) {
         console.log('')
-        console.log('There\'s a lokid that we\'re not tracking using our configuration. You likely will want to confirm and manually stop it before start using the launcher again. Exiting...')
+        console.log('There\'s a lokid that we\'re not tracking using our configuration (rpc_port is already in use). You likely will want to confirm and manually stop it before start using the launcher again. Exiting...')
         console.log('')
         // no pids.json will exist... and not easy to fake one
         daemon.shutdown_everything()
       } else {
         // port is open
         if (isNothingRunning(running)) {
-          console.log("LAUNCHER: Starting fresh copy of Loki Suite")
+          console.log("LAUNCHER: Starting fresh copy of Loki Suite.")
           startEverything(config, args)
           return
         }
@@ -434,7 +439,7 @@ module.exports = function(args, config, entryPoint, debug) {
     return
   }
   if (isNothingRunning(running)) {
-    console.log("LAUNCHER: Starting fresh copy of Loki Suite")
+    console.log("LAUNCHER: Starting fresh copy of Loki Suite.")
     startEverything(config, args)
     return
   }
@@ -460,7 +465,7 @@ module.exports = function(args, config, entryPoint, debug) {
     // it won't because we've already ensured we're the only launcher for this
     if (!pids.lokid || !lib.isPidRunning(pids.lokid)) {
       if (pids.lokid) {
-        console.log('LAUNCHER: lokid just died', pids.lokid)
+        console.log('LAUNCHER: lokid just died.', pids.lokid)
       } else {
         // pids file was just cleared...
       }
@@ -486,14 +491,14 @@ module.exports = function(args, config, entryPoint, debug) {
         daemon.shutdown_everything()
       }
     } else {
-      console.log('RECOVERY: waiting for loki key at', config.storage.lokid_key)
+      console.log('RECOVERY: Waiting for loki key at', config.storage.lokid_key)
       waitForLokiKey(config, 30 * 1000, undefined, function(haveKey) {
         if (!haveKey) {
-          console.error('DAEMON: timeout waiting for loki key')
+          console.error('DAEMON: Timeout waiting for loki key.')
           // FIXME: what do?
           return
         }
-        console.log('RECOVERY: got loki key!')
+        console.log('RECOVERY: Got loki key!')
         //console.log('watching lokid, will reclaim control when it restarts')
         if (config.network.enabled && config.storage.enabled) {
           if (!pids.lokinet || !lib.isPidRunning(pids.lokinet)) {
@@ -534,14 +539,14 @@ module.exports = function(args, config, entryPoint, debug) {
     }
   }
 
-  console.log('RECOVERY: waiting for loki key at', config.storage.lokid_key)
+  console.log('RECOVERY: Waiting for loki key at', config.storage.lokid_key)
   waitForLokiKey(config, 30 * 1000, undefined, function(haveKey) {
     if (!haveKey) {
-      console.error('DAEMON: timeout waiting for loki key')
+      console.error('DAEMON: Timeout waiting for loki key.')
       // FIXME: what do?
       return
     }
-    console.log('RECOVERY: got loki key!')
+    console.log('RECOVERY: Got loki key!')
 
     // figure out how to recover state with a running lokid
     if (config.network.enabled && !running.lokinet) {

@@ -7,16 +7,19 @@ let VERSION = packageData.version
 let useGitVersion = false
 
 if (VERSION.match(/git/)) {
-  const exec = require('child_process').exec
-  exec('git rev-parse HEAD', function(err, stdout) {
-    if (err) {
-      continueStart()
-      return
+  const execSync = require('child_process').execSync
+  try {
+    var stdout = execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+    if (stdout && stdout.toString) {
+      VERSION = stdout.toString().trim()
+      useGitVersion = true
     }
-    VERSION = stdout.trim()
-    useGitVersion = true
-    continueStart()
-  })
+  } catch(e) {
+    // guessing you don't have git installed...
+    //console.warn('git is not installed, can\'t determine revision')
+    // silently fail
+  }
+  continueStart()
 } else {
   continueStart()
 }
@@ -25,7 +28,7 @@ function continueStart() {
   if (os.platform() == 'darwin') {
     if (process.getuid() != 0) {
       console.error('MacOS requires you start this with sudo, i.e. $ sudo ' + __filename)
-      process.exit()
+      process.exit(1)
     }
   } else {
     // FIXME:
@@ -127,7 +130,68 @@ function continueStart() {
       }
     }
   }
-  console.log('running', mode)
+
+  let statusWatcher = false
+
+  function status() {
+    const lokinet = require('./lokinet')
+    var running = lib.getProcessState(config)
+    var pids = lib.getPids(config)
+    if (running.lokid === undefined) {
+      //console.log('no pids...')
+      var pid = lib.areWeRunning(config)
+      if (pids.err == 'noFile'  && pid) {
+        console.log('Launcher is running with no', config.launcher.var_path + '/pids.json, giving it a little nudge, please run status again, current results maybe incorrect')
+        process.kill(pid, 'SIGHUP')
+      } else if (pids.err && pids.err != 'noFile') {
+        console.error('error reading file', config.launcher.var_path + '/pids.json', pids.err)
+      }
+      // update config from pids.json
+      if (pids && !pids.err && pid) {
+        console.log('replacing disk config with running config')
+        config = pids.runningConfig
+      }
+    }
+    //console.log('status pids', pids)
+    //console.log('running', running)
+    // if the launcher is running
+    if (running.launcher) {
+    } else {
+      console.log('Launcher is not running')
+      // FIXME: may want to check on child daemons to make sure they're not free floating?
+    }
+    // launcher will always be imperfect
+    // show info IF we have it
+    // processes may be broken/zombies
+    if (pids.blockchain_startTime) {
+      console.log('Last blockchain (re)start:', new Date(pids.blockchain_startTime))
+    }
+    if (pids.network_startTime) {
+      console.log('Last network    (re)start:', new Date(pids.network_startTime))
+    }
+    if (pids.storage_startTime) {
+      console.log('Last storage    (re)start:', new Date(pids.storage_startTime))
+    }
+
+    // "not running" but too easy to confuse with "running"
+    lib.getLauncherStatus(config, lokinet, 'offline', function(running, checklist) {
+      var nodeVer = Number(process.version.match(/^v(\d+\.\d+)/)[1])
+      //console.log('nodeVer', nodeVer)
+      if (nodeVer >= 10) {
+        console.table(checklist)
+      } else {
+        console.log(checklist)
+      }
+    })
+
+    if (running.lokid) {
+      // read config, run it with status param...
+      // spawn out and relay output...
+      // could also use the socket to issue a print_sn_status
+    }
+  }
+
+  console.log('Running', mode)
   switch(mode) {
     case 'strt':
     case 'strart':
@@ -136,42 +200,10 @@ function continueStart() {
       require(__dirname + '/start')(args, config, __filename, false)
     break;
     case 'status': // official
-      const lokinet = require('./lokinet')
-      var running = lib.getProcessState(config)
-      if (running.lokid === undefined) {
-        //console.log('no pids...')
-        var pid = lib.areWeRunning(config)
-        var pids = lib.getPids(config)
-        if (pids.err == 'noFile'  && pid) {
-          console.log('Launcher is running with no', config.launcher.var_path + '/pids.json, giving it a little nudge, please run status again, current results maybe incorrect')
-          process.kill(pid, 'SIGHUP')
-        } else if (pids.err && pids.err != 'noFile') {
-          console.error('error reading file', config.launcher.var_path + '/pids.json', pids.err)
-        }
-        // update config from pids.json
-        if (pids && !pids.err) {
-          console.log('replacing disk config with running config')
-          config = pids.runningConfig
-        }
-      }
-
-      // "not running" but too easy to confuse with "running"
-      lib.getLauncherStatus(config, lokinet, 'offline', function(running, checklist) {
-        var nodeVer = Number(process.version.match(/^v(\d+\.\d+)/)[1])
-        //console.log('nodeVer', nodeVer)
-        if (nodeVer >= 10) {
-          console.table(checklist)
-        } else {
-          console.log(checklist)
-        }
-      })
-      if (running.lokid) {
-        // read config, run it with status param...
-        // spawn out and relay output...
-        // could also use the socket to issue a print_sn_status
-      }
+      status()
     break;
     case 'stop': // official
+      // maybe use the client to see what's taking lokid a while...
       //console.log('Getting launcher state')
       lib.stopLauncher(config)
       function shutdownMonitor() {
@@ -191,35 +223,86 @@ function continueStart() {
           waiting.push('storage')
         }
         if (running.lokid || running.lokinet || running.storageServer) {
-          console.log('shutdown waiting on', waiting.join(' '))
+          console.log('Shutdown waiting on', waiting.join(' '))
           setTimeout(shutdownMonitor, 1000)
         } else {
-          console.log('successfully shutdown')
+          console.log('Successfully shutdown.')
         }
       }
+
       var running = lib.getProcessState(config)
       var wait = 500
       if (running.lokid) wait += 4500
       if (running.lokid || running.lokinet || running.storageServer) {
-        console.log('waiting for daemons to stop')
+        console.log('Waiting for daemons to stop.')
+
+        const net = require('net')
+
+        var socketPath = config.launcher.var_path + '/launcher.socket'
+        if (fs.existsSync(socketPath)) {
+          console.log('Trying to connect to', socketPath)
+          // FIXME: file exist check
+
+
+          const client = net.createConnection({ path: socketPath }, () => {
+            // 'connect' listener
+            //console.log('Connected to server!')
+          })
+          client.on('error', (err) => {
+            if (err.code == 'EPERM') {
+              console.warn('It seems user', process.getuid(), 'does not have the required permissions to view socket while blockchain stops')
+            } else
+            if (err.code == 'ECONNREFUSED') {
+              console.warn('Can not connect to', socketPath, 'connection is refused')
+            } else {
+              console.warn('client socket err', err)
+            }
+          })
+          client.on('data', (data) => {
+            var stripped = data.toString().trim()
+            console.log('FROM SOCKET:', stripped)
+          })
+          client.on('end', () => {
+            console.log('Disconnected from socket server...')
+            //process.exit()
+          })
+        }
+
         setTimeout(shutdownMonitor, wait)
       }
     break;
     case 'start-debug':
-    case 'interactive':
+      // no interactive or docker
+      config.launcher.cimode = true
       // debug mode basically (but also used internally now)
       process.env.__daemon = true
-      config.launcher.interactive = true
       require(__dirname + '/start')(args, config, __filename, true)
     break;
+    case 'interactive-debug':
+    case 'interactive':
+      config.launcher.interactive = true
+      process.env.__daemon = true
+      if (debugMode) {
+        statusWatcher = setInterval(status, 30*1000)
+        process.on('SIGINT', function () {
+          if (statusWatcher) {
+            clearInterval(statusWatcher)
+            statusWatcher = false
+          }
+        })
+      }
+      require(__dirname + '/start')(args, config, __filename, debugMode)
+    break;
+    case 'daemon-start-debug': // official
     case 'daemon-start': // official
       // debug mode basically (but also used internally now)
       // how this different from systemd-start?
       // this allows for interactive mode...
       process.env.__daemon = true
-      require(__dirname + '/start')(args, config, __filename)
+      require(__dirname + '/start')(args, config, __filename, debugMode)
     break;
     case 'non-interactive':
+    case 'systemd-start-debug':
     case 'systemd-start': // official
       // stay in foreground mode...
       // force docker mode...
@@ -228,14 +311,14 @@ function continueStart() {
       // treat it like an CLI arg
       config.launcher.docker = true
       process.env.__daemon = true
-      require(__dirname + '/start')(args, config, __filename)
+      require(__dirname + '/start')(args, config, __filename, debugMode)
     break;
     case 'config-build': // official
       // build a default config
       // commit it to disk if it doesn't exist
     break;
     case 'config-view': // official
-      console.log('loki-launcher is in', __dirname)
+      console.log('Loki-launcher is in', __dirname)
       // FIXME: prettyPrint
       console.log('Launcher stored-config:', config)
       var pids = lib.getPids(config)
@@ -268,7 +351,7 @@ function continueStart() {
     case 'check-systemd':
     case 'upgrade-systemd': // official
       if (process.getuid() != 0) {
-        console.log('check-systemd needs to be ran as root, try prefixing your attempted command with: sudo')
+        console.log('Check-systemd needs to be ran as root, try prefixing your attempted command with: sudo')
         process.exit(1)
       }
       require(__dirname + '/modes/check-systemd').start(config, __filename)
@@ -278,17 +361,23 @@ function continueStart() {
     case 'setperms':
     case 'set-perms':
     case 'fix-perms': // official
+      var user = findFirstArgWithoutDash()
+      if (!user) {
+        console.log('No user passed in! You must explicitly tell us what user you want the permissions to be set for')
+        console.log('You are currently logged in as', os.userInfo().username)
+        return
+      }
       if (process.getuid() != 0) {
-        console.log('fix-perms needs to be ran as root, try prefixing your attempted command with: sudo')
+        console.log('Fix-perms needs to be ran as root, try prefixing your attempted command with: sudo')
         process.exit(1)
       }
-      var user = findFirstArgWithoutDash()
       require(__dirname + '/modes/fix-perms').start(user, __dirname, config)
     break;
     case 'args-debug': // official
       console.log('in :', process.argv)
       console.log('out:', args)
     break;
+    case 'donwload-binaries': // official
     case 'download-binaries': // official
       require(__dirname + '/modes/download-binaries').start(config)
     break;

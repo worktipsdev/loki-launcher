@@ -10,27 +10,31 @@ const VERSION = 0.2
 
 function clientConnect(config) {
   var socketPath = config.launcher.var_path + '/launcher.socket'
-  console.log('trying to connect to', socketPath)
+  if (!fs.existsSync(socketPath)) {
+    console.warn('No socket file, socket server is not likely running: ', socketPath)
+    process.exit()
+  }
+  console.log('Trying to connect to', socketPath)
   // FIXME: file exist check
   const client = net.createConnection({ path: socketPath }, () => {
     // 'connect' listener
-    console.log('connected to server!')
-    console.log('Remember to use ctrl-c to exit the client without shutting down the service node')
+    console.log('Connected to server!')
+    console.log('Remember to use ctrl-c to exit the client without shutting down the Service Node.')
   })
   //client.setEncoding('utf-8')
   client.on('error', (err) => {
     if (err.code == 'ECONNREFUSED') {
-      console.error('socket is stale, launcher socket server is not running')
+      console.error('Socket is stale, launcher socket server is not running.')
       fs.unlinkSync(socketPath)
-      server.listen(socketPath)
+      // server.listen(socketPath)
       process.exit(1)
     } else
-    if (err.code == 'EPERM') {
-      console.error('It seems user', process.getuid(), 'does not have the required permissions')
+    if (err.code == 'EPERM' || err.code == 'EACCES') {
+      console.error('It seems user', process.getuid(), 'does not have the required permissions.')
       process.exit(1)
     } else
     if (err.code == 'ENOENT') {
-      console.error('socket server is not likely running')
+      console.error('Socket server is not likely running.')
       process.exit(1)
     }
     console.error('error', err)
@@ -53,6 +57,10 @@ function clientConnect(config) {
     stripped = stripped.replace(
       /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').trim()
     if (!stripped) return // don't echo empty lines...
+    if (stripped.match(/^Connection successful/)) {
+      console.log('Server ready.')
+      return
+    }
 
     // why does this work?
     /*
@@ -65,7 +73,7 @@ function clientConnect(config) {
     //}
   })
   client.on('end', () => {
-    console.log('disconnected from server')
+    console.log('Disconnected from server.')
     process.exit()
   })
 
@@ -81,7 +89,7 @@ function clientConnect(config) {
     // confirm on exit?
     lastcommand = str
     if (lastcommand.trim() == "exit") {
-      console.log("SHUTTING DOWN SERVICE NODE and this client, will end when SN is shutdown")
+      console.log("SHUTTING DOWN SERVICE NODE and this client, will end when Service Node has shutdown.")
       // FIXME: prompt
     }
     client.write(str, 'utf8')
@@ -94,12 +102,12 @@ module.exports = function(config) {
   //
   var pid = lib.areWeRunning(config)
   if (!pid) {
-    console.log("launcher isn't running")
+    console.log("Launcher isn't running.")
     // we just started it up...?
     function socketReady(cb) {
       // FIXME: even if the file exists, doesn't mean it works...
       if (!fs.fileExistsSync(config.launcher.var_path + '/launcher.socket')) {
-        console.log('waiting for launcher to start, ctrl-c to stop waiting')
+        console.log('Waiting for launcher to start, ctrl-c to stop waiting.')
         setTimeout(function() {
           socketReady(cb);
         }, 1000)
@@ -115,7 +123,8 @@ module.exports = function(config) {
     */
     process.exit(1)
   } else {
-    console.log('located launcher daemon at', pid)
+    const user = lib.pidUser(pid)
+    console.log('Located launcher daemon at', pid, 'running as', user)
     clientConnect(config)
   }
 }

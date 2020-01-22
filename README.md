@@ -22,6 +22,7 @@ dNMMM0,   ;KMMXo.           ,KMx.        .oNNx'      .dNWx.  :NMo .cKWk;     dMW
 - [npm](https://www.npmjs.com/get-npm) usually installed with nodejs
 - Linux (though macos does works and Windows kind of works)
 - xz (xz-utils apt package) to be able to download and extract updated Linux binaries
+- setcap (libcap2-bin) to be enable lokinet to not need to run as root on Linux
 
 # How to do a fresh service node install
 
@@ -115,7 +116,67 @@ And if you don't have the dependencies to build from source check out [contrib/d
 # Changelog
 
 For more indepth details, be sure to check out our weekly [dev reports](https://loki.network/blog/)
-
+- 1.0.9
+  - fix bug in port validation when upgrading from 5.x
+- 1.0.8*
+  - include storage/network last failure in status
+  - check for port conflicts
+  - connect to client when stopping the launcher, so you can see what the blockchain is taking so long
+  - fix-perms fix network data_dir permissions fix
+  - fix network status
+  - add ifname validation
+  - add p2p/zmq bind-ip processing
+  - change definition of start up success (require storage_rpc, storageServer, network)
+  - fix ECONNREFUSED exception in client mode
+  - fix setcap exceptions in checkConfig
+  - prequal can't bind fix
+  - set network.public_port even in pre 6.x
+  - if cimode exit
+  - fix git rev output parsing
+  - various pre 6.x support fixes (only passing quorumnet-port in 6.x)
+- 1.0.7*
+  - fix bug with qun_port not getting passed to lokid
+  - Fix trying to load port numbers from loki.conf
+- 1.0.6*
+  - Don't commit to saying started unless lokinet can be started
+  - made sure network binary is set for fix-perms
+  - prequal: inform that quorumnet is not a suggestion but required / grammar fixes
+  - only show full status if launcher is running
+  - adjust start up process for loki-storage DH and create warning accordingly
+  - fix stop race condition message
+  - turn off debugging in interactive mode
+  - move lokiKey from storage to blockchain
+  - decrease port test failure timeout to 10s instead of 60s
+  - fix VERSION detection race
+  - fix duplicate socket server error logging
+  - handle lokinet EPERM condition better
+  - various logging clean up
+- 1.0.5*
+  - enable lokinet
+  - changed default storage server port from 23023 to 22021 (SO UPDATE YOUR FIREWALLS)
+  - remove service-node-seed / keyPath from lokinet
+  - add seedMode to lokinet
+  - remove lokinet solo-mode (without blockchain/storage)
+  - bind storage server to 0.0.0.0
+  - improve prequal
+  - interactive mode improvements
+  - require new port checks on startup
+  - adjust lokinet snode config to be more inline with debs
+  - don't use github pre-releases at all
+  - add lokinet files to fix-perms
+  - set data_dir for lokinet
+  - fix-perms handle no user passed and can't lookup user better
+  - include (re)start time in status
+  - download-binaries make architecture aware
+  - make status check storage rpc port
+  - check on storage server every hour and restart if rpc does not respond
+  - timer adjustments/better cancelations for speed improvements
+- 1.0.4*
+  - Add lokid 6.x prequal tests
+- 1.0.3
+  - disable 1.0.2 workaround
+- 1.0.2
+  - add xenial workaround
 - 1.0.0
   - fix storage server pipe that would lock up storage server
   - make sure storage server is running before starting startup is successful

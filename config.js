@@ -60,7 +60,10 @@ function getLokiDataDir(config) {
   return dir
 }
 
+
+// only works after precheckConfig
 var storageDataDirReady = false
+// what calls this?!?
 function getStorageServerDataDir(config) {
   if (!storageDataDirReady) {
     console.log('getStorageServerDataDir is not ready for use!')
@@ -172,6 +175,44 @@ function loadBlockchainConfigFile(xmrOptions, config, output) {
       setupInitialBlockchainOptions(xmrOptions, config)
     }
   }
+
+  // our ini loaded by this point
+  // network and data_dir handled in setupInitialBlockchainOptions() earlier
+
+  // convert .conf to ini options
+  if (xmrOptions['p2p-bind-port']) {
+    config.blockchain.p2p_port = xmrOptions['p2p-bind-port']
+  }
+  if (xmrOptions['rpc-bind-port']) {
+    config.blockchain.rpc_port = xmrOptions['rpc-bind-port']
+  }
+  if (xmrOptions['zmq-rpc-bind-port']) {
+    config.blockchain.zmq_port = xmrOptions['zmq-rpc-bind-port']
+  }
+  if (xmrOptions['quorumnet-port']) {
+    config.blockchain.qun_port = xmrOptions['quorumnet-port']
+  }
+
+  if (xmrOptions['p2p-bind-ip']) {
+    config.blockchain.p2p_ip = xmrOptions['p2p-bind-ip']
+  }
+  if (xmrOptions['zmq-rpc-bind-ip']) {
+    config.blockchain.zmq_ip = xmrOptions['zmq-rpc-bind-ip']
+  }
+
+  if (xmrOptions['rpc-bind-ip']) {
+    config.blockchain.rpc_ip = xmrOptions['rpc-bind-ip']
+  }
+  if (xmrOptions['rpc-login']) {
+    if (xmrOptions['rpc-login'].match(/:/)) {
+      var parts = xmrOptions['rpc-login'].split(/:/)
+      config.blockchain.rpc_user = parts[0]
+      config.blockchain.rpc_pass = parts[1]
+    } else {
+      config.blockchain.rpc_user = xmrOptions['rpc-login']
+    }
+  }
+
 }
 
 // some auto config is slow and needs to be done only if we're ready to activate that sub system
@@ -198,11 +239,15 @@ function getOldBlockchainOptions(args, config, output) {
 function precheckConfig(config, args, debug) {
   if (config.launcher === undefined) config.launcher = { interface: false }
   if (config.blockchain === undefined) config.blockchain = {}
+  if (config.network === undefined) config.network = {}
+  if (config.storage === undefined) config.storage = {}
   // replace any trailing slash before use...
   if (config.launcher.prefix) {
     config.launcher.prefix = config.launcher.prefix.replace(/\/$/, '')
     if (config.launcher.var_path === undefined) config.launcher.var_path = config.launcher.prefix + '/var'
     if (config.blockchain.binary_path === undefined) config.blockchain.binary_path = config.launcher.prefix + '/bin/lokid'
+    if (config.storage.binary_path === undefined) config.storage.binary_path = config.launcher.prefix + '/bin/loki-storage'
+    if (config.network.binary_path === undefined) config.network.binary_path = config.launcher.prefix + '/bin/lokinet'
   }
 
   // we do need a var_path set for the all the PID stuff
@@ -211,7 +256,6 @@ function precheckConfig(config, args, debug) {
   // we need data_dir and testnet
   // if we're not specifying the data_dir
   if (!config.blockchain.data_dir) {
-    const os = require('os')
     //console.log('using default data_dir, network', config.blockchain.network)
     // FIXME: really should be left alone and we should have a getter
     config.blockchain.data_dir = os.homedir() + '/.loki'
@@ -237,16 +281,40 @@ function precheckConfig(config, args, debug) {
 }
 
 var binary3xCache = null
+var binary4Xor5XCache = null
+
+function getLokidVersion(config) {
+  if (config.blockchain.binary_path && fs.existsSync(config.blockchain.binary_path)) {
+    try {
+      var stdout = execFileSync(config.blockchain.binary_path, ['--version'])
+      var lokid_version = stdout.toString().trim()
+      //console.log('lokid_version', lokid_version)
+      binary3xCache = lokid_version.match(/v3\.0/)?true:false
+      binary4Xor5XCache = lokid_version.match(/v[54]\./)?true:false
+      return binary3xCache
+    } catch(e) {
+      console.error('Cant detect lokid version', e)
+      // can't hurt to retry I guess, maybe it is a temp problem
+      //binary3xCache = null
+    }
+  } else {
+    binary3xCache = undefined
+    binary4Xor5XCache = undefined
+  }
+}
+
 function isBlockchainBinary3X(config) {
   if (binary3xCache !== null) return binary3xCache
-  if (config.blockchain.binary_path && fs.existsSync(config.blockchain.binary_path)) {
-    var stdout = execFileSync(config.blockchain.binary_path, ['--version'])
-    var lokid_version = stdout.toString().trim()
-    binary3xCache = lokid_version.match(/v3.0/)?true:false
-    return binary3xCache
-  }
-  return undefined
+  getLokidVersion(config)
+  return binary3xCache
 }
+
+function isBlockchainBinary4Xor5X(config) {
+  if (binary4Xor5XCache !== null) return binary4Xor5XCache
+  getLokidVersion(config)
+  return binary4Xor5XCache
+}
+
 
 function checkLauncherConfig(config) {
   if (config.network === undefined) config.network = {}
@@ -262,7 +330,13 @@ function checkLauncherConfig(config) {
   // we will internally change these defaults over time
   // users are not encourage (currently) to put these in their INI (only loki devs)
   if (config.network.enabled === undefined) {
-    config.network.enabled = false
+    if (isBlockchainBinary3X(config) || isBlockchainBinary4Xor5X(config)) {
+      console.log('3-5 series blockchain binary detected, disabling lokinet by default')
+      config.network.enabled = false
+    } else {
+      config.network.enabled = true
+    }
+    //console.log('lokinet should be running?', config.network.enabled)
   }
   if (config.storage.enabled === undefined) {
     config.storage.enabled = true
@@ -394,29 +468,81 @@ function checkBlockchainConfig(config) {
       config.blockchain.rpc_port = 38160
     } else
     if (config.blockchain.network == 'staging') {
-      config.blockchain.rpc_port = 38154
+      config.blockchain.rpc_port = 38057
     } else {
       // main
       config.blockchain.rpc_port = 22023
     }
   }
+
+  // we know to know about these ports for the port check on start mode
+  if (config.blockchain.qun_port === undefined || config.blockchain.qun_port === '0') {
+    if (config.blockchain.network == 'test') {
+      config.blockchain.qun_port = 38159
+    } else
+    if (config.blockchain.network == 'staging') {
+      config.blockchain.qun_port = 38059
+    } else {
+      config.blockchain.qun_port = 22025
+    }
+  }
+
   // actualize rpc_ip so we can pass it around to other daemons
   if (config.blockchain.rpc_ip === undefined) {
     config.blockchain.rpc_ip = '127.0.0.1'
   }
+
+  config.blockchain.lokid_key = getLokiDataDir(config) + '/key'
+  config.blockchain.lokid_edkey = getLokiDataDir(config) + '/key_ed25519'
 }
 
 // should require blockchain to be configured
 function checkNetworkConfig(config) {
+  // configure this even if not enabled, for prequal
+  if (config.network.public_port === undefined) {
+    config.network.public_port = config.network.testnet ? 1666 : 1090
+  }
   if (!config.network.enabled) return
+  if (config.network.binary_path === undefined) config.network.binary_path = '/opt/loki-launcher/bin/lokinet'
   if (config.network.testnet === undefined) {
     config.network.testnet = config.blockchain.network == "test" || config.blockchain.network == "demo"
   }
   if (config.network.testnet && config.network.netid === undefined) {
     if (config.blockchain.network == "demo") {
       config.network.netid = "demonet"
+    } else {
+      config.network.netid = "gamma"
     }
   }
+  // putting all files required for migration into ~/.loki/network
+  if (config.network.data_dir === undefined) {
+    // FIXME: really should be left alone and we should have a getter
+    //console.log('default network server path, blockchain is', config.blockchain.data_dir)
+    //config.network.data_dir = getLokiDataDir(config) + '/network'
+    config.network.data_dir = os.homedir() + '/.loki/network'
+    if (config.network.testnet) {
+      config.network.data_dir += '_testnet'
+    }
+    config.network.data_dir_is_default = true
+  }
+
+  // if no bootstrap, set default (can't leave this blank for lokinet)
+  if (config.network.bootstrap_path === undefined && config.network.connects === undefined &&
+     config.network.bootstrap_url === undefined) {
+    if (config.network.testnet) {
+      config.network.bootstrap_url = 'https://seed.lokinet.org/testnet.signed'
+    } else {
+      config.network.bootstrap_url = 'https://seed.lokinet.org/lokinet.signed'
+    }
+  }
+
+  if (config.network.rpc_port === undefined) {
+    config.network.rpc_port = 1190
+  }
+  /*
+    mkdir -p /dev/net
+    mknod /dev/net/tun c 10 200
+  */
 }
 
 // requires blockchain to be configured
@@ -424,20 +550,27 @@ function checkNetworkConfig(config) {
 function checkStorageConfig(config) {
   if (!config.storage.enabled) return
   if (config.storage.binary_path === undefined) config.storage.binary_path = '/opt/loki-launcher/bin/loki-storage'
+
+  if (config.storage.testnet === undefined) {
+    config.storage.testnet = config.blockchain.network == "test" || config.blockchain.network == "demo"
+  }
+
   if (config.storage.data_dir === undefined) {
-    const os = require('os')
     // FIXME: really should be left alone and we should have a getter
     //console.log('default storage server path, blockchain is', config.blockchain.data_dir)
     //config.storage.data_dir = getLokiDataDir(config) + '/storage'
     // launcher can use the same storage path for testnet and mainnet
     config.storage.data_dir = os.homedir() + '/.loki/storage'
+    if (config.storage.testnet) {
+      config.storage.data_dir += '_testnet'
+    }
     config.storage.data_dir_is_default = true
   }
   // append /testnet if needed
   //config.storage.data_dir = getStorageServerDataDir(config)
   // set default port
   if (!config.storage.port) {
-    config.storage.port = 23023
+    config.storage.port = config.storage.testnet ? 38155 : 22021
   }
   // storage server auto config
   if (config.storage.lokid_key === undefined) {
@@ -453,6 +586,173 @@ function postcheckConfig(config) {
   }
 }
 
+// doesn't work because of the ip bind scope...
+function isPortUsed(port, skip) {
+
+  if (skip !== 'blockchain.rpc_port' && config.blockchain.rpc_port == port) return true
+  if (skip !== 'blockchain.p2p_port' && config.blockchain.p2p_port == port) return true
+  if (skip !== 'blockchain.zmq_port' && config.blockchain.zmq_port == port) return true
+  if (skip !== 'blockchain.qun_port' && config.blockchain.qun_port == port) return true
+
+  if (skip !== 'network.rpc_port' && config.network.rpc_port == port) return true
+  if (skip !== 'network.dns_port' && config.network.dns_port == port) return true
+
+  if (skip !== 'storage.port' && config.storage.port == port) return true
+
+  return false
+}
+
+function portChecks(config) {
+  // only sets p2p port
+  prequal(config) // set up all the ports
+  // track by localhost, all_zeros
+  const localhosts = []
+  const alls = []
+  const ips = []
+
+  function addPort(ip, port, type) {
+    // if the port isn't set, don't check the conflicts on it
+    if (port === undefined) {
+      console.trace(type, 'was passed as undefined')
+      return
+    }
+    const obj = {
+      type: type,
+      ip: ip,
+      port: port
+    }
+    if (ip === '127.0.0.1') {
+      localhosts.push(obj)
+    } else if (ip === '0.0.0.0') {
+      alls.push(obj)
+    } else {
+      // not fully thought out...
+      ips.push(obj)
+    }
+  }
+
+  if (config.blockchain.p2p_ip === undefined) {
+    config.blockchain.p2p_ip = '0.0.0.0'
+  }
+  // rpc_ip can be configured
+  if (config.blockchain.rpc_ip === undefined) {
+    config.blockchain.rpc_ip = '127.0.0.1'
+  }
+  if (config.blockchain.zmq_ip === undefined) {
+    config.blockchain.zmq_ip = '127.0.0.1'
+  }
+  if (config.blockchain.qun_ip === undefined) {
+    config.blockchain.qun_ip = '' // your public ip
+  }
+
+  addPort(config.blockchain.p2p_ip, config.blockchain.p2p_port, 'blockchain.p2p')
+  addPort(config.blockchain.rpc_ip, config.blockchain.rpc_port, 'blockchain.rpc')
+  if (config.blockchain.zmq_port) {
+    addPort(config.blockchain.zmq_ip, config.blockchain.zmq_port, 'blockchain.zmq')
+  }
+  addPort(config.blockchain.qun_ip, config.blockchain.qun_port, 'blockchain.qun')
+
+  if (config.network.enabled) {
+    if (config.network.rpc_ip === undefined) {
+      config.network.rpc_ip = '127.0.0.1'
+    }
+    if (config.network.dns_ip === undefined) {
+      config.network.dns_ip = '127.3.2.1' // your public ip
+    }
+    addPort(config.network.rpc_ip, config.network.rpc_port, 'network.rpc')
+    if (config.network.dns_port) {
+      addPort(config.network.dns_ip, config.network.dns_port, 'network.dns')
+    }
+  }
+
+  if (config.storage.enabled) {
+    if (config.storage.ip === undefined) {
+      config.storage.ip = '0.0.0.0'
+    }
+    addPort(config.storage.ip, config.storage.port, 'storage.port')
+  }
+
+  const conflicts = []
+
+  localhosts.forEach(obj => {
+    if (alls.some(test => test.port == obj.port && test.type != obj.type)) {
+      // localhosts.filter(test => test.port == obj.port)
+      //console.log('found conflict with', obj)
+      if (conflicts.indexOf(obj) === -1) conflicts.push(obj)
+    }
+    if (localhosts.some(test => test.port == obj.port && test.type != obj.type)) {
+      // localhosts.filter(test => test.port == obj.port)
+      //console.log('found conflict with', obj)
+      if (conflicts.indexOf(obj) === -1) conflicts.push(obj)
+    }
+  })
+
+  ips.forEach(obj => {
+    if (alls.some(test => test.port == obj.port && test.type != obj.type)) {
+      // localhosts.filter(test => test.port == obj.port)
+      //console.log('found conflict with', obj)
+      if (conflicts.indexOf(obj) === -1) conflicts.push(obj)
+    }
+    if (ips.some(test => test.port == obj.port && test.type != obj.type)) {
+      // localhosts.filter(test => test.port == obj.port)
+      //console.log('found conflict with', obj)
+      if (conflicts.indexOf(obj) === -1) conflicts.push(obj)
+    }
+  })
+
+  alls.forEach(obj => {
+    if (alls.some(test => test.port == obj.port && test.type != obj.type)) {
+      // localhosts.filter(test => test.port == obj.port)
+      //console.log('found conflict with', obj)
+      if (conflicts.indexOf(obj) === -1) conflicts.push(obj)
+    }
+    if (localhosts.some(test => test.port == obj.port && test.type != obj.type)) {
+      // localhosts.filter(test => test.port == obj.port)
+      //console.log('found conflict with', obj)
+      if (conflicts.indexOf(obj) === -1) conflicts.push(obj)
+    }
+    if (ips.some(test => test.port == obj.port && test.type != obj.type)) {
+      // localhosts.filter(test => test.port == obj.port)
+      //console.log('found conflict with', obj)
+      if (conflicts.indexOf(obj) === -1) conflicts.push(obj)
+    }
+  })
+
+  if (conflicts.length) {
+    console.log('configuration port conflicts:')
+    conflicts.forEach(con => {
+      console.log('configuration item', con.type, 'uses port', con.port, 'on', con.ip)
+    })
+    console.log('please make sure they are all unique values')
+    process.exit(1)
+  }
+}
+
+/*
+function changeHomedir(config, homedir) {
+  if (config.blockchain.data_dir_is_default) {
+    config.blockchain.data_dir = homedir + '/.loki'
+  }
+  if (config.network.data_dir_is_default) {
+    config.network.data_dir = homedir + '/.loki/network'
+    if (config.network.testnet) {
+      config.network.data_dir += '_testnet'
+    }
+  }
+  if (config.storage.data_dir_is_default) {
+    config.storage.data_dir = homedir + '/.loki/storage'
+    if (config.storage.testnet) {
+      config.storage.data_dir += '_testnet'
+    }
+  }
+}
+*/
+
+// the desired user matters
+// hopefully running as the right user
+// we only make dirs as current user if they don't exit
+// won't affect perms on the dir after
+// so fix-perms can right everything
 function ensureDirectoriesExist(config, uid) {
   // from start... (also potentially fix-perms...)
   if (!fs.existsSync(config.launcher.var_path)) {
@@ -465,19 +765,17 @@ function ensureDirectoriesExist(config, uid) {
   // from daemon...
   if (config.storage.data_dir !== undefined) {
     if (!fs.existsSync(config.storage.data_dir)) {
+      consoel.log('making', config.storage.data_dir)
       lokinet.mkDirByPathSync(config.storage.data_dir)
       fs.chownSync(config.launcher.var_path, uid, 0)
     }
   }
   // from prequal.js
-  // FIXME: but the desired user matters
   if (!fs.existsSync(config.blockchain.data_dir)) {
-    // FIXME: hopefully running as the right user
     lokinet.mkDirByPathSync(config.blockchain.data_dir)
     fs.chownSync(config.launcher.var_path, uid, 0)
   }
   // from lokinet.js
-  /*
   if (config.network.data_dir && !fs.existsSync(config.network.data_dir)) {
     consoel.log('making', config.data_dir)
     mkDirByPathSync(config.data_dir)
@@ -488,10 +786,10 @@ function ensureDirectoriesExist(config, uid) {
     mkDirByPathSync(config.network.lokinet_nodedb)
     fs.chownSync(config.launcher.var_path, uid, 0)
   }
-  */
 }
 
 // ran after disk config is loaded
+// for everything (index.js)
 function checkConfig(config, args, debug) {
   precheckConfig(config, args, debug)
   checkLauncherConfig(config)
@@ -499,11 +797,20 @@ function checkConfig(config, args, debug) {
   checkNetworkConfig(config)
   checkStorageConfig(config)
   postcheckConfig(config)
+  // this means no prequal, fix-perm, etc...
+  portChecks(config) // will exit if not ok
+  // also check ifname
+  if (config.network.ifname && config.network.ifname.length > 16) {
+    console.error('Your network.ifname "' + config.network.ifname + '" is too long, is', config.network.ifname.length, 'characters long, need to be 16 or less.')
+    process.exit(1)
+  }
 }
 
-// need blockchain.p2pport
+// need blockchain.p2pport, blockchain.qun_port, network.public_port
 function prequal(config) {
-  if (config.blockchain.p2p_port === undefined) {
+  // this port is set by default in lokid
+  // and it's not a required port, just a prequal suggestion check
+  if (config.blockchain.p2p_port === undefined || config.blockchain.p2p_port === '0') {
     // configure based on network
     // only do this here
     // p2p_port if deafult should be left for undefined...
@@ -514,7 +821,7 @@ function prequal(config) {
       config.blockchain.p2p_port = 38159
     } else
     if (config.blockchain.network == 'staging') {
-      config.blockchain.p2p_port = 38153
+      config.blockchain.p2p_port = 38056
     } else {
       config.blockchain.p2p_port = 22022
     }
@@ -562,4 +869,5 @@ module.exports = {
   setupInitialBlockchainOptions: setupInitialBlockchainOptions,
   ensureDirectoriesExist: ensureDirectoriesExist,
   isBlockchainBinary3X: isBlockchainBinary3X,
+  isBlockchainBinary4Xor5X: isBlockchainBinary4Xor5X,
 }
